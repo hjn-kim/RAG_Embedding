@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# 결과물
+results/
+
+# 문서는 커밋할지 직접 판단하세요.
+# 사내 문서라면 아래 두 줄의 주석을 해제해 깃에서 제외하세요.
+# data/*.docx
+# data/*.pdf
+!data/.gitkeep
+
+# HF 캐시
+hf_cache/
+.cache/
+
+.DS_Store
+.idea/
+.vscode/

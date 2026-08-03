@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────
+# 임베딩 모델 비교 벤치마크 설정
+# ─────────────────────────────────────────────────────────────
+
+paths:
+  data_dir: data                       # 여기에 .docx 1개, .pdf 1개를 넣습니다
+  questions_file: questions/questions.json
+  results_dir: results
+
+chunking:
+  chunk_size: 500                      # 청크 최대 길이(문자 수)
+  chunk_overlap: 100                   # 청크 간 겹침(문자 수)
+  min_chunk_chars: 30                  # 이보다 짧은 청크는 버림
+
+retrieval:
+  top_k: 10                            # 랭킹 상위 몇 개까지 볼지
+  ks: [1, 3, 5, 10]                    # Recall@k 를 계산할 k 목록
+  scope: all                           # all      = 두 문서 청크를 모두 후보로 (권장, 더 어려움)
+                                       # own_doc  = 질문이 속한 문서 안에서만 검색
+
+runtime:
+  device: auto                         # auto | cuda | cpu
+  fp16: true                           # GPU에서 half precision 사용
+  batch_size: 16                       # OOM 나면 8 또는 4로 낮추세요
+  max_seq_length: 1024                 # 모델 입력 토큰 상한 (BGE-M3는 8192까지 가능)
+  hf_token: null                       # gated 모델이 있으면 토큰 입력 (보통 null로 충분)
+
+# ─────────────────────────────────────────────────────────────
+# 비교할 모델들
+#   prefix_style:
+#     none    : 프리픽스 없음                    (KURE-v1, BGE-M3)
+#     e5      : "query: " / "passage: "          (multilingual-e5-small-ko)
+#     e5_inst : "Instruct: {task}\nQuery: {q}"   (multilingual-e5-large-instruct)
+#   backend:
+#     sentence-transformers : 일반 dense 검색
+#     bge-m3                : dense + sparse 하이브리드까지 평가
+# ─────────────────────────────────────────────────────────────
+models:
+  - key: kure-v1
+    hf_id: nlpai-lab/KURE-v1
+    backend: sentence-transformers
+    prefix_style: none
+    dim: 1024
+
+  - key: e5-large-instruct
+    hf_id: intfloat/multilingual-e5-large-instruct
+    backend: sentence-transformers
+    prefix_style: e5_inst
+    dim: 1024
+    instruction: "Given a question in Korean, retrieve the passage that answers it"
+
+  - key: e5-small-ko
+    hf_id: dragonkue/multilingual-e5-small-ko
+    backend: sentence-transformers
+    prefix_style: e5
+    dim: 384
+
+  - key: bge-m3
+    hf_id: BAAI/bge-m3
+    backend: bge-m3
+    prefix_style: none
+    dim: 1024
+    hybrid:
+      enabled: true                    # dense 단독 + 하이브리드 둘 다 리포트
+      dense_weight: 1.0
+      sparse_weight: 0.3
