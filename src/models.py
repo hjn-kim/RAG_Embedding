@@ -21,10 +21,13 @@ class ModelSpec:
     key: str
     hf_id: str
     backend: str = "sentence-transformers"
-    prefix_style: str = "none"  # none | e5 | e5_inst
+    prefix_style: str = "none"  # none | e5 | e5_inst | instruct_gemma
     dim: int | None = None
     instruction: str = "Given a question in Korean, retrieve the passage that answers it"
     hybrid: dict = field(default_factory=dict)
+    # SentenceTransformer(model_kwargs=...) 로 그대로 넘길 값.
+    # 여기서 torch_dtype 을 주면 runtime.fp16 보다 우선한다 (gemma2 는 bfloat16 필수).
+    model_kwargs: dict = field(default_factory=dict)
 
     @classmethod
     def from_config(cls, d: dict) -> "ModelSpec":
@@ -75,6 +78,9 @@ class BaseEncoder:
             return [f"query: {t}" for t in texts]
         if self.spec.prefix_style == "e5_inst":
             return [f"Instruct: {self.spec.instruction}\nQuery: {t}" for t in texts]
+        if self.spec.prefix_style == "instruct_gemma":
+            # bge-multilingual-gemma2 형식. e5_inst 와 태그가 달라 섞으면 성능이 떨어진다.
+            return [f"<instruct>{self.spec.instruction}\n<query>{t}" for t in texts]
         return list(texts)
 
 
@@ -89,8 +95,13 @@ class STEncoder(BaseEncoder):
         kwargs: dict[str, Any] = {"device": device, "trust_remote_code": True}
         if hf_token:
             kwargs["token"] = hf_token
+
+        model_kwargs: dict[str, Any] = dict(spec.model_kwargs)
         if fp16 and device.startswith("cuda"):
-            kwargs["model_kwargs"] = {"torch_dtype": "float16"}
+            # bfloat16 로 배포된 대형 모델(gemma2, jina-v4)은 config 에서 덮어쓸 수 있게 둔다
+            model_kwargs.setdefault("torch_dtype", "float16")
+        if model_kwargs:
+            kwargs["model_kwargs"] = model_kwargs
 
         self.model = SentenceTransformer(spec.hf_id, **kwargs)
         if max_seq_length:

@@ -36,12 +36,16 @@ runtime:
 # ─────────────────────────────────────────────────────────────
 # 비교할 모델들
 #   prefix_style:
-#     none    : 프리픽스 없음                    (KURE-v1, BGE-M3)
-#     e5      : "query: " / "passage: "          (multilingual-e5-small-ko)
-#     e5_inst : "Instruct: {task}\nQuery: {q}"   (multilingual-e5-large-instruct)
+#     none          : 프리픽스 없음                      (KURE-v1, BGE-M3, gte)
+#     e5            : "query: " / "passage: "            (multilingual-e5-small-ko)
+#     e5_inst       : "Instruct: {task}\nQuery: {q}"     (multilingual-e5-large-instruct)
+#     instruct_gemma: "<instruct>{task}\n<query>{q}"     (bge-multilingual-gemma2)
 #   backend:
 #     sentence-transformers : 일반 dense 검색
 #     bge-m3                : dense + sparse 하이브리드까지 평가
+#
+# 무거운 모델은 아래 주석의 VRAM 을 보고 GPU 를 고르세요. 안 쓸 모델은 주석 처리하거나
+# `python -m src.run_benchmark --models kure-v1 gte-multilingual-base` 로 골라 돌리면 됩니다.
 # ─────────────────────────────────────────────────────────────
 models:
   - key: kure-v1
@@ -72,3 +76,26 @@ models:
       enabled: true                    # dense 단독 + 하이브리드 둘 다 리포트
       dense_weight: 1.0
       sparse_weight: 0.3
+
+  # ── 추가 비교 모델 ───────────────────────────────────────────
+  # mGTE 논문의 dense 검색 모델. 305M / 8192 토큰까지 지원.
+  # 다운로드 ~1.2GB, VRAM ~1GB. 지금 쓰는 A4000 에서 여유롭게 돌아갑니다.
+  - key: gte-multilingual-base
+    hf_id: Alibaba-NLP/gte-multilingual-base
+    backend: sentence-transformers
+    prefix_style: none
+    dim: 768
+
+  # Gemma2-9B 기반. 이 목록에서 압도적으로 무겁습니다 —
+  # 다운로드 ~18.5GB, VRAM ~20GB. A4000(16GB)·A4500(20GB)에서는 OOM 이 납니다.
+  # 돌리려면 A5000(24GB) 이상 + Volume Disk 40GB 이상, batch_size 4.
+  - key: bge-gemma2
+    hf_id: BAAI/bge-multilingual-gemma2
+    backend: sentence-transformers
+    prefix_style: instruct_gemma
+    dim: 3584
+    instruction: "Given a question in Korean, retrieve the passage that answers it"
+    model_kwargs:
+      # Gemma2 는 bfloat16 으로 학습됐다. float16 으로 올리면 활성화가 표현 범위를
+      # 넘겨 inf/NaN 이 나고 점수가 0 에 가깝게 망가진다. 반드시 bfloat16 을 쓸 것.
+      torch_dtype: bfloat16

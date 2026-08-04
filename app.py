@@ -175,8 +175,7 @@ c3.metric(f"정답@{lo}", f"{int(best[f'정답@{lo}'])} / {n_questions}")
 c4.metric("인코딩 속도", f"{best['chunks_per_s']:,.0f} chunks/s")
 
 st.caption(
-    f"정렬 기준 **{sort_col}**. 청크 {n_chunks}개짜리 코퍼스에서는 k 를 키울수록 "
-    f"문제가 쉬워져 변별력이 떨어집니다 — @{lo} 를 우선으로 보세요."
+    f"표 정렬 기준 **{sort_col}**. "
 )
 
 tab_overview, tab_questions, tab_misses, tab_chunks = st.tabs(
