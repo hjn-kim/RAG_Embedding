@@ -382,7 +382,7 @@ def main() -> None:
     num_cols = df.select_dtypes("number").columns
     df[num_cols] = df[num_cols].round(4)
 
-    # summary.csv 에는 hf_id 까지 포함한 전체 컬럼을, 화면과 summary.md 에는 추린 표를 쓴다.
+    # 화면에는 hf_id 를 빼고(폭이 넓어져 읽기 나빠짐), summary.csv·summary.md 에는 넣는다.
     display_cols = ["model", "dim", "청크수"]
     display_cols += [f"Hit@{k}" for k in ks]
     display_cols += [f"MRR@{hi}", f"nDCG@{hi}"]
@@ -405,11 +405,9 @@ def main() -> None:
         f"{cfg['chunking']['chunk_overlap']}\n"
         f"- chunks_per_s: 워밍업 후 최소 {cfg['runtime'].get('speed_min_texts', 512)}개 텍스트를 "
         f"{cfg['runtime'].get('speed_repeat', 3)}회 인코딩한 최고 기록\n\n"
-        + view.to_markdown(index=False)
-        + "\n\n" + METRIC_NOTE
-        + "\n<details><summary>hf_id 포함 전체 컬럼</summary>\n\n"
         + df.to_markdown(index=False)
-        + "\n\n</details>\n\n---\n\n"
+        + "\n\n" + METRIC_NOTE
+        + "\n---\n\n"
         + miss_report,
         encoding="utf-8",
     )
