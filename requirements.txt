@@ -1,42 +1,15 @@
-# ── RunPod (Linux + CUDA 12.x) 기준 ───────────────────────────────
-# RunPod PyTorch 템플릿을 쓰면 torch는 이미 설치되어 있으므로
-# 아래 torch 라인은 주석 처리해도 됩니다. (버전 충돌 방지)
-# torch>=2.1.0
+# 대시보드(app.py) 전용 — Streamlit Community Cloud 가 이 파일을 읽는다.
+#
+# Community Cloud 는 저장소 루트의 requirements.txt 를 자동으로 설치하며
+# 파일명을 바꿀 방법이 없다. 그래서 여기엔 대시보드에 필요한 것만 둔다.
+# 벤치마크 실행 의존성(torch, transformers, FlagEmbedding …)은
+# requirements-runpod.txt 에 있고, GPU 파드에서만 설치한다:
+#
+#     pip install -r requirements-runpod.txt
+#
+# 여기에 sentence-transformers 같은 걸 넣으면 torch 까지 딸려와서
+# Community Cloud 리소스 한도를 넘겨 배포가 실패한다.
 
-# 임베딩 모델
-# ── 버전을 고정하는 이유 ─────────────────────────────────────
-# RunPod PyTorch 템플릿의 torch 는 2.4.1 이다. 상한 없이 설치하면 최신
-# transformers/accelerate 가 깔리는데, 이들은 `from torch.distributed.tensor
-# import DTensor` 를 하고 그 공개 경로는 torch 2.5 부터 생겼다. 결과는
-#   ImportError: cannot import name 'DTensor' from 'torch.distributed.tensor'
-# 로 모든 모델 로드가 실패. 아래 조합은 torch 2.4.x 에서 검증된 값이다.
-# huggingface-hub 1.x 는 transformers 4.46 과 호환되지 않으므로 함께 묶는다.
-# 템플릿 torch 가 2.5 이상으로 올라가면 이 상한을 풀어도 된다.
-sentence-transformers==3.3.1
-transformers==4.46.3
-accelerate==1.1.1
-huggingface-hub>=0.26.0,<1.0
-
-# BGE-M3 hybrid(dense+sparse) 평가용. 설치 실패해도 dense 단독으로는 동작함.
-# 1.3.2 로 고정하는 이유: 최신 FlagEmbedding 은 모델 로드 때 dtype= 을 넘기는데
-# 그 인자명은 transformers 4.56 부터다(그 전에는 torch_dtype=). 위에서 4.46.3 에
-# 묶여 있으므로 최신을 쓰면
-#   TypeError: XLMRobertaModel.__init__() got an unexpected keyword argument 'dtype'
-# 로 BGE-M3 만 조용히 실패하고 표에서 두 행이 통째로 빠진다.
-FlagEmbedding==1.3.2
-
-# 문서 파싱
-python-docx>=1.1.0          # .docx
-PyMuPDF>=1.24.0             # .pdf (주 파서)
-pypdf>=4.2.0                # .pdf (fallback)
-
-# 대시보드(app.py)는 로컬에서만 쓰므로 여기 넣지 않는다 — `pip install streamlit` 로 따로.
-# GPU 파드에 streamlit 을 넣으면 apt 로 깔린 blinker 를 pip 이 못 지워
-# "Cannot uninstall blinker ... distutils installed project" 로 설치가 통째로 실패한다.
-
-# 유틸
-numpy>=1.24.0
-pandas>=2.0.0
-tqdm>=4.66.0
-PyYAML>=6.0
-tabulate>=0.9.0
+streamlit>=1.50.0     # st.context.theme, width="stretch" 사용
+pandas>=2.0.0         # summary.csv / details.json / chunks.json 읽기
+# altair 는 streamlit 이 함께 설치하므로 명시하지 않는다
