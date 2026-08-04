@@ -17,9 +17,10 @@ python-docx>=1.1.0          # .docx
 PyMuPDF>=1.24.0             # .pdf (주 파서)
 pypdf>=4.2.0                # .pdf (fallback)
 
-# 결과 비교 대시보드 (streamlit run app.py). 벤치마크 실행에는 필요 없음.
-# 1.50 미만에서는 width="stretch" 를 못 알아듣는다 (구 use_container_width).
-streamlit>=1.50.0
+# 대시보드(app.py)는 로컬에서만 띄우므로 여기 넣지 않는다.
+#   pip install -r requirements-dashboard.txt
+# GPU 파드에 streamlit 을 넣으면 apt 로 깔린 blinker 를 pip 이 못 지워
+# "Cannot uninstall blinker ... distutils installed project" 로 설치가 통째로 실패한다.
 
 # 유틸
 numpy>=1.24.0

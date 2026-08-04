@@ -1,7 +1,9 @@
 """results/ 의 벤치마크 결과를 모델별로 비교하는 대시보드.
 
-    pip install streamlit
+    pip install -r requirements-dashboard.txt
     streamlit run app.py
+
+로컬에서 띄운다. GPU 파드에는 streamlit 을 설치하지 않는다 (requirements.txt 주석 참고).
 
 results/summary.csv, details.json, chunks.json 을 읽는다.
 먼저 `python -m src.run_benchmark` 를 돌려서 그 파일들을 만들어야 한다.
