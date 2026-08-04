@@ -1,7 +1,7 @@
 # ── RunPod (Linux + CUDA 12.x) 기준 ───────────────────────────────
 # RunPod PyTorch 템플릿을 쓰면 torch는 이미 설치되어 있으므로
 # 아래 torch 라인은 주석 처리해도 됩니다. (버전 충돌 방지)
-torch>=2.1.0
+# torch>=2.1.0
 
 # 임베딩 모델
 sentence-transformers>=3.0.0
