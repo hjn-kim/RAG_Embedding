@@ -23,6 +23,17 @@ def precision_at_k(ranked: list[int], gold: set[int], k: int) -> float:
     return len(set(ranked[:k]) & gold) / k
 
 
+def f1_at_k(ranked: list[int], gold: set[int], k: int) -> float:
+    """Precision@k 와 Recall@k 의 조화평균.
+
+    주의: 질문당 정답 청크가 1개인데 k=3 이면 Precision 상한이 1/3 이라
+    F1@3 의 이론적 최대값은 0.5 다. 모델 간 비교용이지 절대값을 보는 지표가 아니다.
+    """
+    p = precision_at_k(ranked, gold, k)
+    r = recall_at_k(ranked, gold, k)
+    return 2 * p * r / (p + r) if (p + r) else 0.0
+
+
 def mrr_at_k(ranked: list[int], gold: set[int], k: int) -> float:
     """첫 정답의 역순위. 1위에 맞히면 1.0, 5위면 0.2."""
     for i, cid in enumerate(ranked[:k], start=1):
@@ -48,10 +59,11 @@ def ndcg_at_k(ranked: list[int], gold: set[int], k: int) -> float:
 def evaluate_ranking(ranked: list[int], gold: set[int], ks: list[int]) -> dict[str, float]:
     out: dict[str, float] = {}
     for k in ks:
+        out[f"Precision@{k}"] = precision_at_k(ranked, gold, k)
         out[f"Recall@{k}"] = recall_at_k(ranked, gold, k)
+        out[f"F1@{k}"] = f1_at_k(ranked, gold, k)
         out[f"Hit@{k}"] = hit_at_k(ranked, gold, k)
     top = max(ks)
     out[f"MRR@{top}"] = mrr_at_k(ranked, gold, top)
     out[f"nDCG@{top}"] = ndcg_at_k(ranked, gold, top)
-    out[f"Precision@{min(ks)}"] = precision_at_k(ranked, gold, min(ks))
     return out

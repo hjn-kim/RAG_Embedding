@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import time
 from pathlib import Path
 
@@ -57,6 +58,50 @@ def rank_from_scores(scores: np.ndarray, allowed: np.ndarray | None, top_k: int)
     return idx[np.argsort(-s[idx])].tolist()
 
 
+def _cuda_sync() -> None:
+    """CUDA 커널은 비동기로 큐잉된다. 동기화하지 않으면 '제출한 시간'을 재게 된다."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+    except ImportError:
+        pass
+
+
+def measure_throughput(fn, texts: list[str], batch_size: int,
+                       min_texts: int, warmup: int, repeat: int) -> tuple[float, int]:
+    """초당 처리 텍스트 수를 측정한다. (texts_per_s, 실제 측정에 쓴 텍스트 수)
+
+    코퍼스가 작으면 CUDA 컨텍스트 초기화·cuBLAS 커널 오토튜닝 같은 '고정 비용'이
+    실제 연산 시간을 압도해서, 먼저 실행된 모델만 손해를 보는 무의미한 숫자가 나온다.
+    (22개 청크에서 KURE-v1 51 chunks/s vs 같은 크기의 e5-large 196 chunks/s 처럼)
+
+    그래서 세 가지를 한다:
+      1) 텍스트를 min_texts 개까지 복제해 고정 비용이 묻힐 만큼 작업량을 늘린다
+      2) 워밍업을 먼저 돌려 초기화 비용을 측정 밖으로 뺀다
+      3) repeat 번 재서 최솟값(외부 간섭이 가장 적었던 실행)을 쓴다
+    """
+    if not texts or repeat < 1:
+        return 0.0, 0
+
+    n = max(min_texts, len(texts))
+    bench = (texts * math.ceil(n / len(texts)))[:n]
+
+    for _ in range(max(warmup, 0)):
+        fn(bench[: min(len(bench), batch_size * 2)], batch_size)
+    _cuda_sync()
+
+    best = float("inf")
+    for _ in range(repeat):
+        t0 = time.perf_counter()
+        fn(bench, batch_size)
+        _cuda_sync()
+        best = min(best, time.perf_counter() - t0)
+
+    return (len(bench) / best if best > 0 else 0.0), len(bench)
+
+
 def run_model(spec: ModelSpec, cfg: dict, chunks, questions, gold):
     """모델 하나를 평가하고 (요약 행 리스트, 질문별 상세 리스트) 반환."""
     runtime = cfg["runtime"]
@@ -68,14 +113,10 @@ def run_model(spec: ModelSpec, cfg: dict, chunks, questions, gold):
     enc = load_encoder(spec, runtime)
 
     corpus_texts = [c.text for c in chunks]
-    t0 = time.time()
     doc_vecs = enc.encode_passages(corpus_texts, bs)
-    encode_sec = time.time() - t0
 
     q_texts = [q.question for q in questions]
-    t0 = time.time()
     q_vecs = enc.encode_queries(q_texts, bs)
-    query_sec = time.time() - t0
 
     dense_scores = q_vecs @ doc_vecs.T  # 정규화되어 있으므로 내적 = 코사인
 
@@ -88,6 +129,22 @@ def run_model(spec: ModelSpec, cfg: dict, chunks, questions, gold):
             h.get("dense_weight", 1.0) * dense_scores
             + h.get("sparse_weight", 0.3) * sparse
         )
+
+    # 속도 측정은 정확도 계산이 끝난 뒤에 한다.
+    # (BGE-M3 는 encode 할 때마다 내부 sparse 상태를 덮어쓰므로 순서를 바꾸면 하이브리드가 깨진다)
+    min_texts = runtime.get("speed_min_texts", 512)
+    warmup = runtime.get("speed_warmup", 1)
+    repeat = runtime.get("speed_repeat", 3)
+    chunks_per_s, n_bench = measure_throughput(
+        enc.encode_passages, corpus_texts, bs, min_texts, warmup, repeat
+    )
+    q_per_s, _ = measure_throughput(
+        enc.encode_queries, q_texts, bs, min_texts, warmup, repeat
+    )
+    query_ms = 1000.0 / q_per_s if q_per_s else 0.0
+    if repeat >= 1:
+        print(f"  속도 측정: {n_bench}개 텍스트 × {repeat}회 (워밍업 {warmup}회) → "
+              f"{chunks_per_s:.1f} chunks/s")
 
     # scope=own_doc 이면 질문이 속한 문서로 후보를 제한
     sources = np.array([c.source for c in chunks])
@@ -127,12 +184,19 @@ def run_model(spec: ModelSpec, cfg: dict, chunks, questions, gold):
                 }
             )
 
-        row = {"model": label, "hf_id": spec.hf_id, "dim": int(doc_vecs.shape[1])}
+        row = {
+            "model": label,
+            "hf_id": spec.hf_id,
+            "dim": int(doc_vecs.shape[1]),
+            "청크수": len(chunks),
+        }
         for metric in per_q[0]:
             row[metric] = float(np.mean([m[metric] for m in per_q]))
-        row["corpus_encode_s"] = round(encode_sec, 2)
-        row["chunks_per_s"] = round(len(chunks) / encode_sec, 1) if encode_sec else 0.0
-        row["query_ms"] = round(query_sec / max(len(questions), 1) * 1000, 1)
+        # Hit@k 평균(비율) 대신 실제로 맞힌 문제 개수 — 표본이 작을 때 체감이 정확하다
+        for k in ks:
+            row[f"정답@{k}"] = int(sum(m[f"Hit@{k}"] for m in per_q))
+        row["chunks_per_s"] = round(chunks_per_s, 1)
+        row["query_ms"] = round(query_ms, 2)
         row["index_MB"] = round(doc_vecs.nbytes / 1024 / 1024, 2)
         summaries.append(row)
 
@@ -193,17 +257,28 @@ def main() -> None:
         all_rows.extend(rows)
         all_details.extend(details)
         for r in rows:
-            top = max(cfg["retrieval"]["ks"])
-            print(f"  → Hit@1 {r['Hit@1']:.3f} | Recall@5 {r.get('Recall@5', float('nan')):.3f} "
-                  f"| nDCG@{top} {r[f'nDCG@{top}']:.3f} | {r['chunks_per_s']} chunks/s")
+            lo = min(cfg["retrieval"]["ks"])
+            print(f"  → 정답@{lo} {r[f'정답@{lo}']}/{len(questions)} | "
+                  f"P@{lo} {r[f'Precision@{lo}']:.3f} | R@{lo} {r[f'Recall@{lo}']:.3f} | "
+                  f"F1@{lo} {r[f'F1@{lo}']:.3f} | {r['chunks_per_s']} chunks/s")
 
     if not all_rows:
         raise SystemExit("성공한 모델이 없습니다.")
 
-    top = max(cfg["retrieval"]["ks"])
-    df = pd.DataFrame(all_rows).sort_values(f"nDCG@{top}", ascending=False)
+    ks = cfg["retrieval"]["ks"]
+    lo = min(ks)
+    df = pd.DataFrame(all_rows).sort_values(f"F1@{lo}", ascending=False)
     num_cols = df.select_dtypes("number").columns
     df[num_cols] = df[num_cols].round(4)
+
+    # summary.csv 에는 MRR·nDCG·index_MB 까지 전부 남기고,
+    # 화면과 summary.md 에는 요청된 컬럼만 추린 표를 보여준다.
+    display_cols = ["model", "dim", "청크수"]
+    for k in ks:
+        display_cols += [f"Precision@{k}", f"Recall@{k}", f"F1@{k}"]
+    display_cols += [f"정답@{k}" for k in ks]
+    display_cols += ["chunks_per_s"]
+    view = df[[c for c in display_cols if c in df.columns]]
 
     df.to_csv(results_dir / "summary.csv", index=False, encoding="utf-8-sig")
     (results_dir / "details.json").write_text(
@@ -211,17 +286,24 @@ def main() -> None:
     )
     (results_dir / "summary.md").write_text(
         "# 임베딩 모델 비교 결과\n\n"
-        f"- 청크 수: {len(chunks)}\n- 질문 수: {len(questions)}\n"
+        f"- 청크 수: {len(chunks)}\n- 질문 수: {len(questions)}  (정답@k 는 이 중 몇 개를 맞혔는지)\n"
         f"- scope: {cfg['retrieval']['scope']}\n"
         f"- chunk_size / overlap: {cfg['chunking']['chunk_size']} / "
-        f"{cfg['chunking']['chunk_overlap']}\n\n"
-        + df.to_markdown(index=False),
+        f"{cfg['chunking']['chunk_overlap']}\n"
+        f"- chunks_per_s: 워밍업 후 최소 {cfg['runtime'].get('speed_min_texts', 512)}개 텍스트를 "
+        f"{cfg['runtime'].get('speed_repeat', 3)}회 인코딩한 최고 기록\n\n"
+        + view.to_markdown(index=False)
+        + "\n\n<details><summary>전체 지표 (MRR / nDCG / query_ms / index_MB 포함)</summary>\n\n"
+        + df.to_markdown(index=False)
+        + "\n\n</details>\n",
         encoding="utf-8",
     )
 
     print("\n" + "=" * 100)
-    print(df.to_string(index=False))
+    print(view.to_string(index=False))
     print("=" * 100)
+    print(f"질문 {len(questions)}개 / 청크 {len(chunks)}개 기준. "
+          f"'정답@k' 는 상위 k개 안에 정답이 하나라도 있던 질문 수입니다.")
     print(f"\n결과 저장: {results_dir}/summary.csv, summary.md, details.json")
     print("모델이 왜 틀렸는지는 details.json 의 top5 를 보세요.")
 
