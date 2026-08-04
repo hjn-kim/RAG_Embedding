@@ -1,0 +1,6 @@
+﻿model,hf_id,dim,청크수,Hit@1,Hit@3,MRR@3,nDCG@3,정답@1,정답@3,VRAM_MB,index_MB,chunks_per_s,query_ms
+kure-v1,nlpai-lab/KURE-v1,1024,22,0.8667,0.9833,0.9194,0.9203,52,59,1240.0,0.09,312.7,0.75
+bge-m3 [hybrid(dense+sparse)],BAAI/bge-m3,1024,22,0.8167,0.9333,0.8694,0.8714,49,56,1230.0,0.09,287.6,1.09
+e5-small-ko,dragonkue/multilingual-e5-small-ko,384,22,0.8,0.9167,0.8583,0.8604,48,55,293.0,0.03,1189.4,0.51
+bge-m3 [dense],BAAI/bge-m3,1024,22,0.8167,0.9167,0.8583,0.8485,49,55,1230.0,0.09,287.6,1.09
+e5-large-instruct,intfloat/multilingual-e5-large-instruct,1024,22,0.65,0.8,0.725,0.7301,39,48,1225.0,0.09,303.0,0.81

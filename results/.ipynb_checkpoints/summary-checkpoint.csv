@@ -1,0 +1,6 @@
+﻿model,hf_id,dim,Recall@1,Hit@1,Recall@3,Hit@3,Recall@5,Hit@5,Recall@10,Hit@10,MRR@10,nDCG@10,Precision@1,corpus_encode_s,chunks_per_s,query_ms,index_MB
+kure-v1,nlpai-lab/KURE-v1,1024,0.8,0.85,0.9583,0.9667,1.0,1.0,1.0,1.0,0.9139,0.9311,0.85,0.43,51.7,1.4,0.09
+bge-m3 [dense],BAAI/bge-m3,1024,0.7667,0.8167,0.9,0.9167,1.0,1.0,1.0,1.0,0.8819,0.9041,0.8167,15.19,1.4,1.8,0.09
+bge-m3 [hybrid(dense+sparse)],BAAI/bge-m3,1024,0.75,0.8,0.9417,0.95,1.0,1.0,1.0,1.0,0.8783,0.9024,0.8,15.19,1.4,1.8,0.09
+e5-small-ko,dragonkue/multilingual-e5-small-ko,384,0.7333,0.7833,0.9083,0.9167,0.9583,0.9667,1.0,1.0,0.8632,0.8909,0.7833,0.07,302.1,1.1,0.03
+e5-large-instruct,intfloat/multilingual-e5-large-instruct,1024,0.575,0.6167,0.8333,0.8333,0.8833,0.8833,0.9333,0.9333,0.7284,0.7782,0.6167,0.11,195.8,1.6,0.09
