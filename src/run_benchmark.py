@@ -39,8 +39,6 @@ METRIC_NOTE = (
     "- **VRAM_MB**  모델 로드 + 인코딩 중 최대 GPU 메모리 사용량\n"
     "- **index_MB**  청크 벡터를 전부 담은 인덱스 용량 (차원에 비례)\n"
     "- **chunks_per_s / query_ms**  워밍업 후 측정한 인코딩 처리량 / 질문 1개당 지연\n"
-    "- Precision·Recall·F1 은 summary.csv 에 남아 있다. "
-    "정답 청크가 1개인 질문이 대부분이라 Recall@k = Hit@k 이고, F1@3 은 상한이 0.5 라 표에서 뺐다.\n"
 )
 
 
@@ -384,10 +382,7 @@ def main() -> None:
     num_cols = df.select_dtypes("number").columns
     df[num_cols] = df[num_cols].round(4)
 
-    # summary.csv 에는 Precision·Recall·F1 까지 전부 남기고,
-    # 화면과 summary.md 에는 요청된 지표만 추린 표를 보여준다.
-    # Precision 대신 Hit 을 쓰는 이유: 정답이 1개뿐인 질문에서 Precision@3 은
-    # 상한이 1/3 이라 @1 보다 낮게 나온다. "상위 k개 안에 들어왔나"를 보려면 Hit@k 가 맞다.
+    # summary.csv 에는 hf_id 까지 포함한 전체 컬럼을, 화면과 summary.md 에는 추린 표를 쓴다.
     display_cols = ["model", "dim", "청크수"]
     display_cols += [f"Hit@{k}" for k in ks]
     display_cols += [f"MRR@{hi}", f"nDCG@{hi}"]
@@ -412,7 +407,7 @@ def main() -> None:
         f"{cfg['runtime'].get('speed_repeat', 3)}회 인코딩한 최고 기록\n\n"
         + view.to_markdown(index=False)
         + "\n\n" + METRIC_NOTE
-        + "\n<details><summary>전체 지표 (Precision / Recall / F1 포함)</summary>\n\n"
+        + "\n<details><summary>hf_id 포함 전체 컬럼</summary>\n\n"
         + df.to_markdown(index=False)
         + "\n\n</details>\n\n---\n\n"
         + miss_report,

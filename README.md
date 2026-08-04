@@ -25,12 +25,16 @@
 
 | 지표 | 의미 |
 |---|---|
-| **Hit@1 / Hit@k** | 상위 k개 안에 정답이 하나라도 있었는가. RAG 체감 성능에 가장 직결 |
-| **Recall@k** | 전체 정답 중 상위 k개에 들어온 비율 |
-| **MRR@10** | 첫 정답의 순위 역수 (1위=1.0, 5위=0.2) |
-| **nDCG@10** | 정답을 얼마나 위쪽에 몰아놨는가 (최종 정렬 기준) |
-| chunks_per_s / query_ms | 인덱싱·검색 속도 |
-| index_MB | 벡터 인덱스 용량 (차원에 비례) |
+| **Hit@1 / Hit@3** | 상위 k개 안에 정답이 하나라도 있었는가. RAG 체감 성능에 가장 직결 |
+| **정답@1 / 정답@3** | 같은 값을 비율이 아니라 실제 맞힌 문제 개수로 센 것 |
+| **MRR@3** | 첫 정답의 순위 역수 (1위=1.0, 2위=0.5, 3위=0.33) |
+| **nDCG@3** | 정답을 얼마나 위쪽에 몰아놨는가 (최종 정렬 기준) |
+| VRAM_MB / index_MB | 인코딩 중 최대 GPU 메모리 / 벡터 인덱스 용량 |
+| chunks_per_s / query_ms | 인덱싱·검색 속도 (워밍업 후 측정) |
+
+Precision·Recall·F1 은 쓰지 않습니다. 질문당 정답 청크가 1개라 `Recall@k` 는 `Hit@k` 와
+값이 같고, `Precision@k` 는 상한이 1/k 라 k 를 키우면 오히려 내려가서 @1 과 @3 을
+나란히 놓고 읽을 수 없기 때문입니다.
 
 ## 실행 순서
 
@@ -133,7 +137,7 @@ src/
   chunker.py             공통 청킹
   gold.py                질문 로드 + 정답 청크 자동 라벨링
   models.py              모델별 prefix 규칙 + 인코더 래퍼
-  metrics.py             Recall/Hit/MRR/nDCG
+  metrics.py             Hit/MRR/nDCG
   run_benchmark.py       메인 실행
   inspect_chunks.py      청크 확인 헬퍼
   download_models.py     HF 사전 다운로드

@@ -14,7 +14,7 @@ chunking:
 
 retrieval:
   top_k: 10                            # 랭킹 상위 몇 개까지 볼지
-  ks: [1, 3]                           # Precision/Recall/F1 을 계산할 k 목록
+  ks: [1, 3]                           # Hit@k 를 계산할 k 목록. MRR·nDCG 는 최대값 기준
                                        # 코퍼스가 작으면 k 를 키워도 전부 1.0 이라 변별력이 없다
   scope: all                           # all      = 두 문서 청크를 모두 후보로 (권장, 더 어려움)
                                        # own_doc  = 질문이 속한 문서 안에서만 검색
