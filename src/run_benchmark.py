@@ -20,7 +20,7 @@ import pandas as pd
 import yaml
 
 from .chunker import chunk_blocks
-from .gold import label_gold, load_questions
+from .gold import label_gold, load_questions, match_context
 from .loaders import load_documents
 from .metadata import attach_metadata
 from .metrics import evaluate_ranking
@@ -225,7 +225,16 @@ def run_model(spec: ModelSpec, cfg: dict, chunks, questions, gold):
                             "is_gold": cid in gold[q.id],
                             "source": chunks[cid].source,
                             "locator": chunks[cid].locator,
-                            "preview": chunks[cid].text[:120],
+                            "섹션": chunks[cid].meta.get("섹션"),
+                            # gold 청크는 '왜 정답인지' 걸린 문구 주변을 보여준다
+                            "match": (
+                                match_context(
+                                    chunks[cid].text, q.must_include + q.any_include
+                                )
+                                if cid in gold[q.id]
+                                else None
+                            ),
+                            "preview": chunks[cid].text[:200],
                         }
                         for cid in ranked[:5]
                     ],

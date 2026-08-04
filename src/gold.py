@@ -74,6 +74,38 @@ def load_questions(path: Path) -> list[Question]:
     return questions
 
 
+def match_context(text: str, phrases: list[str], width: int = 90) -> str | None:
+    """청크에서 must_include/any_include 문구가 실제로 걸린 지점 주변을 잘라 반환.
+
+    청크 앞부분만 보여주는 preview 로는 "왜 이게 정답 청크인지"를 확인할 수 없다.
+    (예: 566자 청크의 290자 지점에 답이 있으면 preview 200자로는 안 보인다)
+
+    매칭은 공백을 지운 문자열에서 하므로, 원문 위치로 되돌리기 위해
+    '공백 제거 문자열의 i번째 글자 → 원문의 몇 번째 글자' 인덱스를 같이 만든다.
+    """
+    norm = unicodedata.normalize("NFKC", text)
+    lowered = norm.lower()
+    packed, back = [], []
+    for i, ch in enumerate(lowered):
+        if not ch.isspace():
+            packed.append(ch)
+            back.append(i)
+    key = "".join(packed)
+
+    for phrase in phrases:
+        pk = _key(phrase)
+        if not pk:
+            continue
+        pos = key.find(pk)
+        if pos == -1:
+            continue
+        start, end = back[pos], back[min(pos + len(pk), len(back)) - 1] + 1
+        left, right = max(0, start - width), min(len(norm), end + width)
+        snippet = re.sub(r"\s+", " ", norm[left:right]).strip()
+        return ("…" if left > 0 else "") + snippet + ("…" if right < len(norm) else "")
+    return None
+
+
 # gold 청크가 전체 코퍼스의 이 비율을 넘으면 조건이 너무 헐렁하다고 본다.
 BROAD_RATIO = 0.25
 
