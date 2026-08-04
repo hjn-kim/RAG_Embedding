@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 import time
 from pathlib import Path
 
@@ -21,15 +22,38 @@ import yaml
 from .chunker import chunk_blocks
 from .gold import label_gold, load_questions
 from .loaders import load_documents
+from .metadata import attach_metadata
 from .metrics import evaluate_ranking
 from .models import ModelSpec, load_encoder, resolve_device
 
 ROOT = Path(__file__).resolve().parent.parent
 
+METRIC_NOTE = (
+    "- **Hit@k**  상위 k개 안에 정답이 하나라도 있던 질문 비율. "
+    "k 가 커지면 절대 낮아지지 않는다 (Hit@1 <= Hit@3)\n"
+    "- **정답@k**  같은 값을 비율이 아니라 실제 맞힌 문제 개수로 센 것\n"
+    "- **MRR@k**  첫 정답의 등수 역수 (1등=1.0, 2등=0.5, 3등=0.33, 밖=0). "
+    "'찾았나'와 '얼마나 위에 올렸나'를 한 숫자로 묶은 것\n"
+    "- **nDCG@k**  정답을 얼마나 위쪽에 몰아놨는지. 정답이 여러 개일 때도 제대로 계산된다 "
+    "(최종 정렬 기준)\n"
+    "- **VRAM_MB**  모델 로드 + 인코딩 중 최대 GPU 메모리 사용량\n"
+    "- **index_MB**  청크 벡터를 전부 담은 인덱스 용량 (차원에 비례)\n"
+    "- **chunks_per_s / query_ms**  워밍업 후 측정한 인코딩 처리량 / 질문 1개당 지연\n"
+    "- Precision·Recall·F1 은 summary.csv 에 남아 있다. "
+    "정답 청크가 1개인 질문이 대부분이라 Recall@k = Hit@k 이고, F1@3 은 상한이 0.5 라 표에서 뺐다.\n"
+)
+
 
 def build_corpus(cfg: dict):
     print("[1/4] 문서 로드")
     blocks = load_documents(ROOT / cfg["paths"]["data_dir"])
+
+    # 메타데이터는 기록 전용이다. 검색 후보를 거르는 데 쓰지 않으므로
+    # 모델 간 비교 조건은 그대로 유지된다.
+    doc_meta = attach_metadata(blocks)
+    for source, m in doc_meta.items():
+        print(f"    {source}: {m['doc_type']} / {m['기관'] or '기관?'} / "
+              f"{m['작성일'] or '작성일?'} / 섹션 {m['섹션수']}개")
 
     print("[2/4] 청킹")
     ck = cfg["chunking"]
@@ -67,6 +91,28 @@ def _cuda_sync() -> None:
             torch.cuda.synchronize()
     except ImportError:
         pass
+
+
+def _reset_peak_mem() -> None:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+    except ImportError:
+        pass
+
+
+def _peak_mem_mb() -> float:
+    """모델 로드 + 인코딩 동안 찍은 최대 GPU 메모리(MB). CPU 실행이면 0."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return torch.cuda.max_memory_allocated() / 1024 / 1024
+    except ImportError:
+        pass
+    return 0.0
 
 
 def measure_throughput(fn, texts: list[str], batch_size: int,
@@ -110,6 +156,7 @@ def run_model(spec: ModelSpec, cfg: dict, chunks, questions, gold):
     ks = ret["ks"]
     top_k = max(ret["top_k"], max(ks))
 
+    _reset_peak_mem()  # 모델 로드부터의 피크 VRAM 을 재기 위해 직전에 초기화
     enc = load_encoder(spec, runtime)
 
     corpus_texts = [c.text for c in chunks]
@@ -142,9 +189,10 @@ def run_model(spec: ModelSpec, cfg: dict, chunks, questions, gold):
         enc.encode_queries, q_texts, bs, min_texts, warmup, repeat
     )
     query_ms = 1000.0 / q_per_s if q_per_s else 0.0
+    vram_mb = _peak_mem_mb()
     if repeat >= 1:
         print(f"  속도 측정: {n_bench}개 텍스트 × {repeat}회 (워밍업 {warmup}회) → "
-              f"{chunks_per_s:.1f} chunks/s")
+              f"{chunks_per_s:.1f} chunks/s, 피크 VRAM {vram_mb:.0f}MB")
 
     # scope=own_doc 이면 질문이 속한 문서로 후보를 제한
     sources = np.array([c.source for c in chunks])
@@ -195,16 +243,66 @@ def run_model(spec: ModelSpec, cfg: dict, chunks, questions, gold):
         # Hit@k 평균(비율) 대신 실제로 맞힌 문제 개수 — 표본이 작을 때 체감이 정확하다
         for k in ks:
             row[f"정답@{k}"] = int(sum(m[f"Hit@{k}"] for m in per_q))
+        row["VRAM_MB"] = round(vram_mb, 0)
+        row["index_MB"] = round(doc_vecs.nbytes / 1024 / 1024, 2)
         row["chunks_per_s"] = round(chunks_per_s, 1)
         row["query_ms"] = round(query_ms, 2)
-        row["index_MB"] = round(doc_vecs.nbytes / 1024 / 1024, 2)
+        # 틀린 문제는 표에 넣기엔 길어서 별도 리포트로 뺀다 (main 에서 pop)
+        row["_misses"] = {
+            k: [questions[i].id for i, m in enumerate(per_q) if m[f"Hit@{k}"] == 0.0]
+            for k in ks
+        }
         summaries.append(row)
 
     enc.close()
     return summaries, details
 
 
+def build_miss_report(misses: dict, questions, gold, ks: list[int]) -> str:
+    """모델별로 못 맞힌 질문을 나열한다.
+
+    맨 앞의 '모든 모델이 틀린 문제' 가 가장 중요하다. 어느 모델도 못 맞혔다면
+    모델 성능 문제가 아니라 질문 문장이나 must_include 라벨을 의심해야 한다.
+    """
+    qtext = {q.id: q.question for q in questions}
+    n = len(questions)
+    lines = [f"# 틀린 문제 목록  (질문 {n}개 기준)", ""]
+
+    for k in ks:
+        sets = [set(m.get(k, [])) for m in misses.values() if m]
+        common = set.intersection(*sets) if sets else set()
+        lines += [f"## 모든 모델이 @{k} 에서 틀린 문제 — {len(common)}개", ""]
+        if common:
+            lines += ["모델 탓이 아닐 가능성이 높다. 질문 문장 또는 정답 라벨을 점검할 것.", ""]
+            lines += [
+                f"- `{qid}` (정답 청크 {len(gold.get(qid, []))}개)  {qtext.get(qid, '')}"
+                for qid in sorted(common)
+            ]
+        else:
+            lines.append("없음")
+        lines.append("")
+
+    lines += ["---", ""]
+    for model, m in misses.items():
+        lines += [f"## {model}", ""]
+        for k in ks:
+            ids = m.get(k, [])
+            lines += [f"### 틀린@{k} — {len(ids)}/{n}개", ""]
+            lines += (
+                [f"- `{qid}`  {qtext.get(qid, '')}" for qid in ids] if ids else ["없음"]
+            )
+            lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def main() -> None:
+    # Windows 콘솔은 기본이 cp949 라 '—' 같은 기호에서 UnicodeEncodeError 로 죽는다.
+    # (RunPod/Linux 는 원래 UTF-8 이라 무해)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(ROOT / "config.yaml"))
     ap.add_argument("--models", nargs="*", default=None, help="평가할 모델 key (기본: 전체)")
@@ -258,27 +356,38 @@ def main() -> None:
         all_details.extend(details)
         for r in rows:
             lo = min(cfg["retrieval"]["ks"])
-            print(f"  → 정답@{lo} {r[f'정답@{lo}']}/{len(questions)} | "
-                  f"P@{lo} {r[f'Precision@{lo}']:.3f} | R@{lo} {r[f'Recall@{lo}']:.3f} | "
-                  f"F1@{lo} {r[f'F1@{lo}']:.3f} | {r['chunks_per_s']} chunks/s")
+            hi = max(cfg["retrieval"]["ks"])
+            print(f"  → 정답 {r[f'정답@{lo}']}/{len(questions)}(@{lo}) → "
+                  f"{r[f'정답@{hi}']}/{len(questions)}(@{hi}) | "
+                  f"Hit@{lo} {r[f'Hit@{lo}']:.3f} | Hit@{hi} {r[f'Hit@{hi}']:.3f} | "
+                  f"{r['chunks_per_s']} chunks/s")
 
     if not all_rows:
         raise SystemExit("성공한 모델이 없습니다.")
 
     ks = cfg["retrieval"]["ks"]
-    lo = min(ks)
-    df = pd.DataFrame(all_rows).sort_values(f"F1@{lo}", ascending=False)
+    lo, hi = min(ks), max(ks)
+
+    # 틀린 문제 목록은 표에 넣기엔 길어서 별도 리포트로 뺀다
+    misses = {r["model"]: r.pop("_misses", {}) for r in all_rows}
+
+    df = pd.DataFrame(all_rows).sort_values(f"nDCG@{hi}", ascending=False)
     num_cols = df.select_dtypes("number").columns
     df[num_cols] = df[num_cols].round(4)
 
-    # summary.csv 에는 MRR·nDCG·index_MB 까지 전부 남기고,
-    # 화면과 summary.md 에는 요청된 컬럼만 추린 표를 보여준다.
+    # summary.csv 에는 Precision·Recall·F1 까지 전부 남기고,
+    # 화면과 summary.md 에는 요청된 지표만 추린 표를 보여준다.
+    # Precision 대신 Hit 을 쓰는 이유: 정답이 1개뿐인 질문에서 Precision@3 은
+    # 상한이 1/3 이라 @1 보다 낮게 나온다. "상위 k개 안에 들어왔나"를 보려면 Hit@k 가 맞다.
     display_cols = ["model", "dim", "청크수"]
-    for k in ks:
-        display_cols += [f"Precision@{k}", f"Recall@{k}", f"F1@{k}"]
+    display_cols += [f"Hit@{k}" for k in ks]
+    display_cols += [f"MRR@{hi}", f"nDCG@{hi}"]
     display_cols += [f"정답@{k}" for k in ks]
-    display_cols += ["chunks_per_s"]
+    display_cols += ["VRAM_MB", "index_MB", "chunks_per_s", "query_ms"]
     view = df[[c for c in display_cols if c in df.columns]]
+
+    miss_report = build_miss_report(misses, questions, gold, ks)
+    (results_dir / "misses.md").write_text(miss_report, encoding="utf-8")
 
     df.to_csv(results_dir / "summary.csv", index=False, encoding="utf-8-sig")
     (results_dir / "details.json").write_text(
@@ -293,19 +402,36 @@ def main() -> None:
         f"- chunks_per_s: 워밍업 후 최소 {cfg['runtime'].get('speed_min_texts', 512)}개 텍스트를 "
         f"{cfg['runtime'].get('speed_repeat', 3)}회 인코딩한 최고 기록\n\n"
         + view.to_markdown(index=False)
-        + "\n\n<details><summary>전체 지표 (MRR / nDCG / query_ms / index_MB 포함)</summary>\n\n"
+        + "\n\n" + METRIC_NOTE
+        + "\n<details><summary>전체 지표 (Precision / Recall / F1 포함)</summary>\n\n"
         + df.to_markdown(index=False)
-        + "\n\n</details>\n",
+        + "\n\n</details>\n\n---\n\n"
+        + miss_report,
         encoding="utf-8",
     )
 
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 110)
     print(view.to_string(index=False))
-    print("=" * 100)
-    print(f"질문 {len(questions)}개 / 청크 {len(chunks)}개 기준. "
-          f"'정답@k' 는 상위 k개 안에 정답이 하나라도 있던 질문 수입니다.")
-    print(f"\n결과 저장: {results_dir}/summary.csv, summary.md, details.json")
-    print("모델이 왜 틀렸는지는 details.json 의 top5 를 보세요.")
+    print("=" * 110)
+    print(f"질문 {len(questions)}개 / 청크 {len(chunks)}개 기준")
+    print(METRIC_NOTE)
+
+    # 틀린 문제 — 화면에는 요약만, 전체 목록은 misses.md
+    print("── 틀린 문제 " + "─" * 60)
+    for k in ks:
+        sets = [set(m.get(k, [])) for m in misses.values() if m]
+        common = sorted(set.intersection(*sets)) if sets else []
+        print(f"  모든 모델이 @{k} 에서 틀림: {len(common)}개"
+              + (f"  {', '.join(common)}" if common else ""))
+    for model, m in misses.items():
+        parts = [f"@{k} {len(m.get(k, []))}개" for k in ks]
+        worst = m.get(max(ks), [])
+        print(f"  {model:32s} " + " / ".join(parts)
+              + (f"  →  {', '.join(worst)}" if worst else ""))
+
+    print(f"\n결과 저장: {results_dir}/summary.csv, summary.md, misses.md, details.json")
+    print("  · misses.md    질문별로 어느 모델이 틀렸는지 전체 목록")
+    print("  · details.json 왜 틀렸는지 — 질문마다 실제로 뽑아온 상위 5개 청크")
 
 
 if __name__ == "__main__":

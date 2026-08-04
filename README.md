@@ -129,6 +129,7 @@ questions/questions.json 질문 + 정답 라벨
 data/                    비교 대상 문서
 src/
   loaders.py             docx/pdf 텍스트 추출
+  metadata.py            문서종류·기관·작성일·제목·섹션 추출 (규칙 기반, 기록 전용)
   chunker.py             공통 청킹
   gold.py                질문 로드 + 정답 청크 자동 라벨링
   models.py              모델별 prefix 규칙 + 인코더 래퍼

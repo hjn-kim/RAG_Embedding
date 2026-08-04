@@ -13,7 +13,12 @@ def recall_at_k(ranked: list[int], gold: set[int], k: int) -> float:
 
 
 def hit_at_k(ranked: list[int], gold: set[int], k: int) -> float:
-    """상위 k개 안에 정답이 하나라도 있으면 1. 실무 RAG 에서 가장 체감되는 지표."""
+    """상위 k개 안에 정답이 하나라도 있으면 1. Success@k / Accuracy@k 라고도 한다.
+
+    "정답이 상위 k개 안에 들어올 확률"이라 k 가 커지면 절대 낮아지지 않는다
+    (ranked[:1] 은 ranked[:3] 의 부분집합이므로 Hit@1 <= Hit@3 이 항상 성립).
+    실무 RAG 에서 가장 체감되는 지표이고, 이 프로젝트의 주 비교 기준이다.
+    """
     return 1.0 if set(ranked[:k]) & gold else 0.0
 
 
@@ -27,7 +32,8 @@ def f1_at_k(ranked: list[int], gold: set[int], k: int) -> float:
     """Precision@k 와 Recall@k 의 조화평균.
 
     주의: 질문당 정답 청크가 1개인데 k=3 이면 Precision 상한이 1/3 이라
-    F1@3 의 이론적 최대값은 0.5 다. 모델 간 비교용이지 절대값을 보는 지표가 아니다.
+    F1@3 의 이론적 최대값은 0.5 다. Hit@k 와 달리 k 가 커지면 오히려 내려가므로,
+    @1 과 @3 을 세로로 비교하지 말고 같은 k 안에서 모델끼리만 비교할 것.
     """
     p = precision_at_k(ranked, gold, k)
     r = recall_at_k(ranked, gold, k)

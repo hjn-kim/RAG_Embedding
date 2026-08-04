@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -15,6 +15,7 @@ class Block:
     text: str
     source: str  # 파일명
     locator: str  # "p.3", "para.12", "table.2" 처럼 원문 위치
+    meta: dict = field(default_factory=dict)  # src/metadata.py 가 채운다 (문서종류·기관·작성일·섹션)
 
 
 def normalize_text(text: str) -> str:
