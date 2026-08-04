@@ -1,6 +1,6 @@
 """results/ 의 벤치마크 결과를 모델별로 비교하는 대시보드.
 
-    pip install -r requirements-dashboard.txt
+    pip install streamlit
     streamlit run app.py
 
 로컬에서 띄운다. GPU 파드에는 streamlit 을 설치하지 않는다 (requirements.txt 주석 참고).
